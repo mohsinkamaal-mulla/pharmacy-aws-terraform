@@ -1,0 +1,83 @@
+#!/bin/bash
+
+apt update 
+apt install ansible -y
+sudo su ubuntu
+mkdir /home/ubuntu/inventory
+
+cat >/home/ubuntu/inventory/ansible.cfg<<EOF
+[application]
+ubuntu@${jenkins_ip} ansible_ssh_private_key_file='./inventory/id_rsa' ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+EOF
+
+cat > /home/ubuntu/install-docker.yaml<<EOF
+---
+- hosts: application
+  become: true
+  tasks:
+  - name: Install packages that allow apt to be used over HTTPS
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg-agent
+      - software-properties-common
+      - unzip
+
+  - name: Add an apt signing key for Docker
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add apt repository for stable version
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable
+      state: present
+
+  - name: Install docker and its dependecies
+    apt: 
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - docker-ce 
+      - docker-ce-cli 
+      - containerd.io
+
+  - name: Create file docker.service.d and restart service
+    command: "{{ item }}"
+    with_items:
+        - mkdir -p /etc/systemd/system/docker.service.d
+        - systemctl daemon-reload
+        - systemctl restart docker
+
+  - name: Add ubuntu user to docker group
+    user:
+      name: ubuntu
+      group: docker
+
+  - name: Install awscli
+    command: "{{ item }}"
+    with_items:
+      - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+      - unzip awscliv2.zip
+      - ./aws/install
+EOF
+
+cat >/home/ubuntu/inventory/id_rsa.pub<<EOF
+${public_key}
+EOF
+
+cat >/home/ubuntu/inventory/id_rsa<<EOF
+${private_key}
+EOF
+
+
+# Run this after logging into the bastion host
+#ansible-playbook /home/ubuntu/install-docker.yaml -i /home/ubuntu/inventory/ansible.cfg
